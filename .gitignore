@@ -1,0 +1,53 @@
+# Terraform working files
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local tool / editor settings
+.vscode/
+.idea/
+.kiro/
+
+# ASH (Automated Security Helper) scan output
+.ash/
+
+# OS
+.DS_Store
+
+# Raw captured plan output: large, and carries account identifiers. Keep it local.
+# The REDUCED AND REDACTED fixtures (tests/fixtures/real-*.json) are deliberately
+# tracked - they are the only independently-sourced evidence in the suite, and
+# test_real_fixtures.py re-scans them for identifiers on every run. Produce them with
+# tests/redact_plan.py; never commit a raw capture.
+*.plan.json
+
+# draw.io autosave backups
+.$*.drawio.bkp
+*.drawio.bkp
+*.drawio.dtmp
+
+# Python build artefacts
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Terraform-packaged source archives (generated at plan time)
+.source-packages/
+
+# Local deployment values. Not secrets - credentials live in Secrets Manager and are referenced
+# by name - but these carry an AWS account id, repository slug and bucket names, which are
+# account identifiers and do not belong in a distributed repository.
+*.auto.tfvars
+*.tfvars
+!*.tfvars.example
