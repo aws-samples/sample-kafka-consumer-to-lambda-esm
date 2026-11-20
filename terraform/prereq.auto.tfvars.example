@@ -1,0 +1,32 @@
+# Copy to prereq.auto.tfvars and fill in.
+#
+# These six values are the whole contract with the prerequisite environment. If you ran the
+# accompanying sample-infra root, `terraform output -raw pattern_tfvars` prints this file
+# populated. If you are pointing this at a cluster you already run, fill it in by hand — that
+# case is the reason the seam is variables rather than a remote-state lookup.
+#
+# prereq.auto.tfvars is gitignored; this .example file is not.
+
+msk_cluster_arn                = "arn:aws:kafka:us-east-1:111122223333:cluster/my-cluster/fc2f5bdf-fd1b-45ad-85dd-15b4a5a6247e-2"
+msk_bootstrap_brokers_sasl_iam = "b-1.mycluster.abcde.c2.kafka.us-east-1.amazonaws.com:9098,b-2.mycluster.abcde.c2.kafka.us-east-1.amazonaws.com:9098"
+
+vpc_id                    = "vpc-0123456789abcdef0"
+private_subnet_ids        = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+
+# Must permit the broker port (9098 for IAM) FROM ITSELF. The event source mapping's network
+# interfaces join this group, so without the self-ingress rule the mapping cannot reach the
+# brokers — and nothing in the function's logs will tell you why.
+cluster_security_group_id = "sg-0123456789abcdef0"
+
+# One mapping, function, read model and ledger per entry. `event_type` is matched against the
+# message VALUE; a discriminator living only in a Kafka header cannot be filtered declaratively.
+topics = {
+  orders = {
+    topic_name = "orders"
+    event_type = "OrderPlaced"
+  }
+  shipments = {
+    topic_name = "shipments"
+    event_type = "ShipmentDispatched"
+  }
+}

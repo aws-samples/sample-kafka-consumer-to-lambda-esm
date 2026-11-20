@@ -1,0 +1,11 @@
+# The producer's dependencies. The projection handler has none, because it needs only the standard
+# library and boto3, which the Lambda runtime provides. This function speaks the Kafka protocol
+# directly, so it has a build step.
+#
+# Pinned rather than floating, so a moved transitive dependency cannot break the sample.
+kafka-python-ng==2.2.3
+
+# 1.0.2 reads its own version through importlib.metadata instead of pkg_resources, so setuptools is
+# not required in the package. Do not re-add it: 82.0.1 and earlier carry CVE-2026-59890 and
+# GHSA-xmj3-9gf7-h52w, and every release that fixes them (>= 83.0.0) has dropped pkg_resources.
+aws-msk-iam-sasl-signer-python==1.0.2

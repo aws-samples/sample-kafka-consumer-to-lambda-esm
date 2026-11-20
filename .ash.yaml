@@ -1,0 +1,198 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/awslabs/automated-security-helper/refs/heads/main/automated_security_helper/schemas/AshConfig.json
+#
+# `path` is REQUIRED on every suppression. If it is missing, ASH discards this entire file and
+# falls back to defaults, logging one ERROR line to .ash/ash.log. The suppressions then read as
+# reviewed while none are in effect. After editing, confirm that "Using config file found at" is
+# not followed by "Using default configuration due to validation error".
+#
+# Several scanners flag the same underlying issue under different rule IDs, so suppressing one can
+# leave the other actionable. Such pairs are listed together below.
+#
+# Suppressions are not a substitute for fixes. The DynamoDB customer-managed key, point-in-time
+# recovery, log retention and the split network-interface permissions were all suppressed here
+# until a content scan rated them High, and each turned out to be a small change. Prefer fixing.
+
+project_name: msk-lambda-read-model
+
+global_settings:
+    severity_threshold: MEDIUM
+
+    ignore_paths:
+        - path: '.terraform'
+          reason: 'Terraform provider cache'
+        - path: '.ash'
+          reason: 'ASH scan output'
+        - path: '.venv'
+          reason: 'Local virtualenv, not shipped'
+        - path: '.terraform.lock.hcl'
+          reason: 'Provider hashes, not secrets'
+        - path: 'build'
+          reason: 'Build artifacts'
+        - path: 'dist'
+          reason: 'Build artifacts'
+        - path: '.pytest_cache'
+          reason: 'Test runner cache'
+        - path: '**/__pycache__'
+          reason: 'Python bytecode'
+
+    suppressions:
+        # ==================================================================
+        # FALSE POSITIVES
+        # ==================================================================
+        # bandit B101 flags `assert`, which is pytest's assertion mechanism. Scoped to tests/ rather
+        # than suppressed globally, so a stray assert in shipped code is still reported.
+        - rule_id: 'B101'
+          path: 'tests'
+          reason: 'False positive: assert is pytest''s assertion mechanism. Scoped to tests/ only'
+
+        # The EC2 network-interface permissions are now split: the read-only Describe actions carry
+        # "*" because they do not support resource-level permissions, and CreateNetworkInterface and
+        # DeleteNetworkInterface are scoped to the subnets and security group in use. No suppression
+        # is needed for either role policy.
+        #
+        # The KMS key policy still carries "*", which is the only value KMS accepts there. That is
+        # skipped inline in kms.tf rather than here, so it applies to scanners that do not read this
+        # file.
+
+        # ==================================================================
+        # INTENDED: the finding describes a design decision
+        # ==================================================================
+        # The projection function is not VPC-attached by design. It reaches DynamoDB over the AWS
+        # network and never contacts a broker; the mapping's poller does that under its role.
+        # Attaching it would add ENI lifecycle to every deploy and destroy: Lambda reclaims VPC ENIs
+        # asynchronously, so they outlive the function and hold the subnets.
+        - rule_id: 'CKV_AWS_117'
+          path: 'terraform/lambda.tf'
+          reason: 'Intended: not VPC-attached. The ESM poller handles broker reachability. See README'
+        - rule_id: 'CKV_AWS_117'
+          path: 'terraform/replay.tf'
+          reason: 'Intended: replay function is not VPC-attached, same as the live projection'
+
+        # S3 versioning is off by design. Enabling it without a noncurrent_version_expiration rule
+        # would retain failed-record payloads past the lifecycle expiry, defeating the purpose of
+        # bounding payload retention. These objects are written once and never overwritten.
+        - rule_id: 'CKV_AWS_21'
+          path: 'terraform/s3.tf'
+          reason: 'Intended: versioning would retain payloads beyond the lifecycle expiry'
+
+        # No consumer of S3 event notifications exists in this design.
+        - rule_id: 'CKV2_AWS_62'
+          path: 'terraform/s3.tf'
+          reason: 'Intended: nothing in this architecture consumes S3 event notifications'
+
+        # dead_letter_config applies only to asynchronous invocations. The event source mapping invokes
+        # synchronously and uses destination_config.on_failure (S3), and the producer is invoked with
+        # RequestResponse, so a Lambda DLQ would never receive anything in this architecture.
+        - rule_id: 'CKV_AWS_116'
+          path: 'terraform/lambda.tf'
+          reason: 'FP: DLQ applies to async invocations only; the ESM invokes synchronously'
+        - rule_id: 'CKV_AWS_116'
+          path: 'terraform/producer.tf'
+          reason: 'FP: producer is invoked synchronously (RequestResponse); a DLQ would receive nothing'
+        - rule_id: 'CKV_AWS_116'
+          path: 'terraform/replay.tf'
+          reason: 'FP: same as the live projection; ESM invocation is synchronous'
+
+        # ==================================================================
+        # ACCEPTED FOR A SAMPLE: real findings, not fixed here
+        # ==================================================================
+        # Each of these is satisfied only by a customer-managed KMS key ARN; the AWS-managed
+        # encryption already in place does not satisfy them. The DynamoDB tables already use a
+        # customer-managed key. For Lambda environment variables and CloudWatch log groups, a CMK plus
+        # the key policies roughly doubles the IAM in this repository. Production handling customer
+        # data should name its own keys. Recorded in SECURITY.md.
+        #
+        # Checkov and semgrep report these under different rule IDs, so both are listed.
+
+        - rule_id: 'CKV_AWS_158'
+          path: 'terraform/lambda.tf'
+          reason: 'Accepted for a sample: default log group encryption, no CMK'
+        - rule_id: 'CKV_AWS_158'
+          path: 'terraform/producer.tf'
+          reason: 'Accepted for a sample: default log group encryption, no CMK'
+        - rule_id: 'CKV_AWS_158'
+          path: 'terraform/replay.tf'
+          reason: 'Accepted for a sample: default log group encryption, no CMK'
+        - rule_id: 'terraform.aws.security.aws-cloudwatch-log-group-unencrypted.aws-cloudwatch-log-group-unencrypted'
+          path: 'terraform/lambda.tf'
+          reason: 'Duplicate of CKV_AWS_158'
+        - rule_id: 'terraform.aws.security.aws-cloudwatch-log-group-unencrypted.aws-cloudwatch-log-group-unencrypted'
+          path: 'terraform/producer.tf'
+          reason: 'Duplicate of CKV_AWS_158'
+        - rule_id: 'terraform.aws.security.aws-cloudwatch-log-group-unencrypted.aws-cloudwatch-log-group-unencrypted'
+          path: 'terraform/replay.tf'
+          reason: 'Duplicate of CKV_AWS_158'
+
+        # Lambda environment variables hold table names and a log level, and no secrets. IAM
+        # authentication means there is no Kafka credential to store here.
+        - rule_id: 'CKV_AWS_173'
+          path: 'terraform/lambda.tf'
+          reason: 'Accepted for a sample: env vars hold table names only. IAM auth means no credential'
+        - rule_id: 'CKV_AWS_173'
+          path: 'terraform/producer.tf'
+          reason: 'Accepted for a sample: env vars hold broker endpoints and topic names, no secrets'
+        - rule_id: 'CKV_AWS_173'
+          path: 'terraform/replay.tf'
+          reason: 'Accepted for a sample: env vars hold table names only'
+        - rule_id: 'terraform.aws.security.aws-lambda-environment-unencrypted.aws-lambda-environment-unencrypted'
+          path: 'terraform/lambda.tf'
+          reason: 'Duplicate of CKV_AWS_173'
+        - rule_id: 'terraform.aws.security.aws-lambda-environment-unencrypted.aws-lambda-environment-unencrypted'
+          path: 'terraform/producer.tf'
+          reason: 'Duplicate of CKV_AWS_173'
+        - rule_id: 'terraform.aws.security.aws-lambda-environment-unencrypted.aws-lambda-environment-unencrypted'
+          path: 'terraform/replay.tf'
+          reason: 'Duplicate of CKV_AWS_173'
+
+        # Code signing requires a signing profile and a signed artifact pipeline. Out of scope for a
+        # sample a reader clones and applies directly from source.
+        - rule_id: 'CKV_AWS_272'
+          path: 'terraform/lambda.tf'
+          reason: 'Accepted for a sample: code signing needs a signing profile and signed artifacts'
+        - rule_id: 'CKV_AWS_272'
+          path: 'terraform/producer.tf'
+          reason: 'Accepted for a sample: code signing needs a signing profile and signed artifacts'
+        - rule_id: 'CKV_AWS_272'
+          path: 'terraform/replay.tf'
+          reason: 'Accepted for a sample: code signing needs a signing profile and signed artifacts'
+
+        # The failure bucket uses SSE-S3 (AES256) rather than SSE-KMS. A CMK would be the production
+        # choice, and would require granting kms:GenerateDataKey on that key to the execution role,
+        # because the mapping writes these objects rather than the function.
+        - rule_id: 'CKV_AWS_145'
+          path: 'terraform/s3.tf'
+          reason: 'Accepted for a sample: SSE-S3 rather than SSE-KMS on the failure bucket'
+
+        # S3 access logging and cross-region replication each need a further bucket.
+        - rule_id: 'CKV_AWS_18'
+          path: 'terraform/s3.tf'
+          reason: 'Accepted for a sample: access logging needs a second bucket'
+        - rule_id: 'CKV_AWS_144'
+          path: 'terraform/s3.tf'
+          reason: 'Accepted for a sample: single-region, no cross-region replication'
+
+        # ==================================================================
+        # KNOWN GAPS: real, and should be closed before production use
+        # ==================================================================
+        # Each of these changes live behaviour, so none is a configuration-only edit.
+
+        # X-Ray tracing is off. Enabling it requires an xray:PutTraceSegments grant on every
+        # execution role.
+        - rule_id: 'CKV_AWS_50'
+          path: 'terraform/lambda.tf'
+          reason: 'KNOWN GAP: X-Ray tracing off. Enable with an xray grant on the execution role.'
+        - rule_id: 'CKV_AWS_50'
+          path: 'terraform/producer.tf'
+          reason: 'KNOWN GAP: X-Ray tracing off.'
+        - rule_id: 'CKV_AWS_50'
+          path: 'terraform/replay.tf'
+          reason: 'KNOWN GAP: X-Ray tracing off.'
+        - rule_id: 'terraform.aws.security.aws-lambda-x-ray-tracing-not-active.aws-lambda-x-ray-tracing-not-active'
+          path: 'terraform/lambda.tf'
+          reason: 'KNOWN GAP: duplicate of CKV_AWS_50.'
+        - rule_id: 'terraform.aws.security.aws-lambda-x-ray-tracing-not-active.aws-lambda-x-ray-tracing-not-active'
+          path: 'terraform/producer.tf'
+          reason: 'KNOWN GAP: duplicate of CKV_AWS_50.'
+        - rule_id: 'terraform.aws.security.aws-lambda-x-ray-tracing-not-active.aws-lambda-x-ray-tracing-not-active'
+          path: 'terraform/replay.tf'
+          reason: 'KNOWN GAP: duplicate of CKV_AWS_50.'
